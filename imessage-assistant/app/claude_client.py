@@ -1,4 +1,4 @@
-"""Calls Claude to produce a reply. Phase 1: no memory, no tools - one message in, one reply out."""
+"""Calls Claude to produce a reply. No tools yet."""
 
 import logging
 
@@ -17,7 +17,13 @@ Keep replies short, like a text message, unless the user asks for detail.
 If you don't know something or can't do it, say so plainly instead of guessing."""
 
 
-def get_reply(user_text: str) -> str:
+def get_reply(user_text: str, history: list[dict] | None = None) -> str:
+    """history: earlier messages in this chat, oldest first, e.g.
+    [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hey!"}]
+    Pass None or [] to answer with no memory.
+    """
+    messages = (history or []) + [{"role": "user", "content": user_text}]
+
     response = client.beta.messages.create(
         model=settings.claude_model,
         max_tokens=16000,
@@ -28,11 +34,12 @@ def get_reply(user_text: str) -> str:
         # fallback model inside the same call instead of returning nothing.
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
-        messages=[{"role": "user", "content": user_text}],
+        messages=messages,
     )
 
     logger.info(
-        "Claude replied: stop_reason=%s input_tokens=%d output_tokens=%d",
+        "Claude replied: history=%d msgs stop_reason=%s input_tokens=%d output_tokens=%d",
+        len(messages) - 1,
         response.stop_reason,
         response.usage.input_tokens,
         response.usage.output_tokens,

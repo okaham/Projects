@@ -48,6 +48,9 @@ class Settings:
     allowed_senders: frozenset[str]
     webhook_secret: str
     log_file: str
+    memory_enabled: bool
+    history_limit: int
+    db_path: str
 
 
 def load_settings() -> Settings:
@@ -66,6 +69,9 @@ def load_settings() -> Settings:
         allowed_senders=frozenset(allowed),
         webhook_secret=_required("WEBHOOK_SECRET"),
         log_file=os.getenv("LOG_FILE", "logs/assistant.log"),
+        memory_enabled=os.getenv("MEMORY_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
+        history_limit=int(os.getenv("HISTORY_LIMIT", "20")),
+        db_path=os.getenv("DB_PATH", "data/assistant.db"),
     )
 
 

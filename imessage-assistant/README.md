@@ -5,10 +5,12 @@ A personal Claude assistant you text over iMessage. Runs on your Mac.
 ```
 iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
    --> filters (secret, allowlist, not-from-me, not group, not tapback, not duplicate)
+   --> load last 20 messages (SQLite, if memory is on)
    --> Claude --> BlueBubbles REST API --> reply arrives on your phone
+   --> save your text + the reply (SQLite)
 ```
 
-**Current phase: 1 (core loop).** No memory or tools yet. Each text is answered on its own.
+**Status:** Phase 1 (core loop) and Phase 2 (memory) are written and unit-tested, but **not yet tested on the Mac**. Memory ships turned off (`MEMORY_ENABLED=false`) so you can check Phase 1 alone first. No tools yet.
 
 ## Files
 
@@ -18,6 +20,7 @@ iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
 | `app/main.py` | FastAPI server: `/webhook` decides whether to reply; `/health` is for checks |
 | `app/bluebubbles.py` | Parses BlueBubbles webhooks and sends texts through its REST API |
 | `app/claude_client.py` | The Claude API call |
+| `app/memory.py` | SQLite conversation history (`data/assistant.db`) |
 | `app/logging_setup.py` | Logs to the terminal and `logs/assistant.log` (rotating, max 5 MB) |
 | `scripts/check_setup.py` | Tests BlueBubbles and Claude separately, before you try end to end |
 | `tests/` | Tests for the webhook filters (Claude and BlueBubbles are faked) |
@@ -57,7 +60,7 @@ Fill in:
 
 **4. Run the tests** (no network needed):
 ```bash
-pytest -q          # expect: 14 passed
+pytest -q          # expect: 24 passed
 ```
 
 ---
@@ -102,6 +105,27 @@ From your iPhone, text the Apple ID that BlueBubbles is signed into. In the log 
 
 ---
 
+## Part 3: Turn on memory (Phase 2)
+
+Do this only after Part 2 works with memory off.
+
+1. In `.env`, set `MEMORY_ENABLED=true`.
+2. Stop the server (Ctrl+C) and start it again. The log should say `Memory ON: last 20 messages per chat`.
+3. Text "My favorite color is green." Then text "What's my favorite color?" It should answer green. With memory off, it can't know.
+4. Look at what was stored (you already know SQL, so this is just a normal table):
+   ```bash
+   sqlite3 data/assistant.db "SELECT id, role, substr(content, 1, 60), created_at FROM messages ORDER BY id DESC LIMIT 10"
+   ```
+5. To wipe memory and start fresh: stop the server, then `rm data/assistant.db`. It's recreated on the next start.
+
+How memory behaves:
+- Rows are saved only after BlueBubbles accepts the reply for sending. If Claude or the send fails, neither your text nor a reply is stored, so failed attempts never show up in history.
+- Your text and the reply are saved together in one transaction, so the history always alternates you → bot → you → bot. Claude's API expects that order.
+- If you send two texts quickly, the second waits until the first is answered and saved, so the second can see the first.
+- `HISTORY_LIMIT=20` means 20 messages: your last 10 texts plus the bot's last 10 replies.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -113,21 +137,24 @@ From your iPhone, text the Apple ID that BlueBubbles is signed into. In the log 
 | `BlueBubbles send failed: HTTP 500` | Usually a macOS permission. System Settings → Privacy & Security → **Automation** → BlueBubbles → turn on **Messages**. Also check that Full Disk Access and Accessibility are still granted. |
 | `Claude call failed` / 401 | Bad `ANTHROPIC_API_KEY`, or the account has no credits. |
 | Changed `.env` and nothing happened | Settings load at startup. Restart uvicorn (Ctrl+C, then run it again). |
+| Bot forgets things with memory on | Check the log line `Claude replied: history=N msgs`. If N is always 0, `MEMORY_ENABLED` isn't `true`, or the server wasn't restarted. |
+| `Reply sent, but saving message ... failed` | The reply reached you but wasn't stored. Usually disk space or permissions on `data/`. |
 
 ---
 
 ## Design notes
 
 - **Why reply in the background:** the webhook returns `200` right away, and the slow Claude call (a few seconds) runs afterwards. If BlueBubbles had to wait for Claude, it might time out and resend the webhook.
-- **Why there's a duplicate check:** if a webhook is delivered twice, the second copy is dropped by message GUID, so you never get two replies to one text. The list lives in memory and resets on restart. It moves to SQLite in Phase 2.
+- **Why there's a duplicate check:** if a webhook is delivered twice, the second copy is dropped by message GUID, so you never get two replies to one text. The list of recent GUIDs is kept in RAM and resets on restart. That's fine for duplicates that arrive seconds apart.
 - **Why group chats are ignored:** a reply in a group chat goes to everyone in it, even when you were the one who sent the message.
-- **Model and cost:** `claude-opus-5-5` at `effort=low`. A short exchange is a few hundred tokens, so roughly $0.005–$0.01 per text at $4/$20 per million input/output tokens. Once Phase 2 adds 20 messages of history, every request resends that history, so expect several times more per text. You can change `CLAUDE_MODEL` and `CLAUDE_EFFORT` in `.env`.
+- **Model and cost:** `claude-opus-5-5` at `effort=low`, priced at $4/$20 per million input/output tokens. With memory off, a short exchange costs roughly $0.005–$0.01. With memory on, every request resends up to 20 earlier messages, so expect a few cents per text if your messages are long. You can change `CLAUDE_MODEL` and `CLAUDE_EFFORT` in `.env`.
+- **Why no prompt caching:** caching only pays off when the same prompt start is resent within about 5 minutes. Texts are usually further apart than that. Once there are 20 messages, the oldest one drops off every turn, so the start of the prompt changes each time anyway. Writing to the cache costs 25% more than normal input, so here it would raise the bill, not lower it.
 - **Refusal fallback:** the API call turns on server-side `fallbacks="default"`. If a safety filter wrongly declines a harmless message, the API retries it on a fallback model in the same call. If the whole chain still declines, you get "Sorry, I can't help with that one."
 
 ## Roadmap
 
-1. ✅ Core loop (verify end to end on the Mac)
-2. Memory: last ~20 messages per chat in SQLite
+1. Core loop: written and unit-tested, not yet tested on the Mac
+2. Memory (last 20 messages per chat in SQLite): written and unit-tested, not yet tested on the Mac
 3. launchd service with auto-restart
 4. Tools: Google Calendar (read) → Gmail (read → draft → send, with confirmation by text) → Google Drive. Every side-effecting action asks for confirmation first.
 5. Scheduled tasks (e.g. a morning calendar summary)

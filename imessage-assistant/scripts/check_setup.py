@@ -31,6 +31,17 @@ def main() -> int:
         print(f"[FAIL] Claude call failed: {e}")
         ok = False
 
+    if settings.memory_enabled:
+        from app import memory
+        try:
+            memory.init_db()
+            print(f"[OK]   Memory database ready at {settings.db_path}")
+        except Exception as e:
+            print(f"[FAIL] Memory database at {settings.db_path}: {e}")
+            ok = False
+    else:
+        print("[--]   Memory is off (MEMORY_ENABLED=false)")
+
     if "--send" in sys.argv:
         target = sorted(settings.allowed_senders)[0]
         # 1:1 iMessage chat guids look like "iMessage;-;+15551234567" or "iMessage;-;me@icloud.com"

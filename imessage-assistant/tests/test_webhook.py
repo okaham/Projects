@@ -1,19 +1,23 @@
 """Tests for the webhook filters. Claude and BlueBubbles are replaced with fakes - no network calls."""
 
+import dataclasses
+
 import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
+import app.memory as memory
 from app.config import normalize_address
 
 
 @pytest.fixture
 def fakes(monkeypatch):
     """Swap the real Claude/BlueBubbles calls for fakes that record what they were called with."""
-    calls = {"claude": [], "sent": []}
+    calls = {"claude": [], "history": [], "sent": []}
 
-    def fake_get_reply(text):
+    def fake_get_reply(text, history=None):
         calls["claude"].append(text)
+        calls["history"].append(history)
         return f"echo: {text}"
 
     def fake_send_text(chat_guid, text):
@@ -97,13 +101,60 @@ def test_wrong_secret_rejected(fakes):
 
 
 def test_claude_error_is_reported_not_swallowed(fakes, monkeypatch, caplog):
-    def broken(text):
+    def broken(text, history=None):
         raise RuntimeError("API down")
 
     monkeypatch.setattr(main, "get_reply", broken)
     post(make_payload())
     assert "Failed to handle message" in caplog.text
     assert len(fakes["sent"]) == 1 and "Sorry" in fakes["sent"][0][1]
+
+
+# --- Memory (Phase 2) ---
+
+@pytest.fixture
+def memory_on(monkeypatch, tmp_path):
+    """Turn memory on and point it at a throwaway database in a temp folder."""
+    test_settings = dataclasses.replace(
+        main.settings, memory_enabled=True, history_limit=20, db_path=str(tmp_path / "test.db")
+    )
+    monkeypatch.setattr(main, "settings", test_settings)
+    monkeypatch.setattr(memory, "settings", test_settings)
+    memory.init_db()
+
+
+def test_memory_off_sends_no_history(fakes):
+    post(make_payload(text="first", guid="a"))
+    post(make_payload(text="second", guid="b"))
+    assert fakes["history"] == [[], []]
+
+
+def test_memory_on_second_text_sees_first(fakes, memory_on):
+    post(make_payload(text="my name is Kevin", guid="a"))
+    post(make_payload(text="what's my name?", guid="b"))
+    assert fakes["history"][1] == [
+        {"role": "user", "content": "my name is Kevin"},
+        {"role": "assistant", "content": "echo: my name is Kevin"},
+    ]
+
+
+def test_memory_not_saved_when_claude_fails(fakes, memory_on, monkeypatch):
+    def broken(text, history=None):
+        raise RuntimeError("API down")
+
+    monkeypatch.setattr(main, "get_reply", broken)
+    post(make_payload(text="lost", guid="a"))
+    assert memory.get_recent("iMessage;-;+15551234567", 20) == []
+
+
+def test_memory_save_failure_does_not_send_apology(fakes, memory_on, monkeypatch, caplog):
+    def broken_save(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(memory, "save_exchange", broken_save)
+    post(make_payload(text="hi"))
+    assert fakes["sent"] == [("iMessage;-;+15551234567", "echo: hi")]
+    assert "saving message" in caplog.text
 
 
 @pytest.mark.parametrize(

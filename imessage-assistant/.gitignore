@@ -3,6 +3,7 @@
 
 # Runtime data
 logs/
+data/
 *.db
 *.sqlite3
 
