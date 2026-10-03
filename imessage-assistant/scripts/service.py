@@ -1,6 +1,6 @@
 """Run the assistant as a macOS background service (launchd) that starts at login and restarts if it crashes.
 
-    python -m scripts.service install     # create the service and start it
+    python -m scripts.service install     # create the service and start it (+ morning summary if set in .env)
     python -m scripts.service status      # is it running? does /health answer?
     python -m scripts.service restart     # after changing code or .env
     python -m scripts.service uninstall   # stop it and remove it
@@ -19,12 +19,14 @@ import sys
 from pathlib import Path
 
 LABEL = "local.imessage-assistant"  # unique name launchd uses for this service
+MORNING_LABEL = "local.imessage-assistant.morning"
 PORT = 8000
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent  # the imessage-assistant folder
 VENV_PYTHON = PROJECT_DIR / ".venv" / "bin" / "python"
 LOG_DIR = PROJECT_DIR / "logs"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+MORNING_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{MORNING_LABEL}.plist"
 
 
 def build_plist() -> dict:
@@ -52,6 +54,53 @@ def build_plist() -> dict:
     }
 
 
+def parse_time(value: str) -> tuple[int, int]:
+    """ "07:30" -> (7, 30). Raises ValueError for anything else."""
+    hour_text, minute_text = value.split(":")
+    hour, minute = int(hour_text), int(minute_text)
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(value)
+    return hour, minute
+
+
+def build_morning_plist(hour: int, minute: int) -> dict:
+    """A second job that runs scripts.morning_summary once a day and then exits."""
+    return {
+        "Label": MORNING_LABEL,
+        "ProgramArguments": [str(VENV_PYTHON), "-m", "scripts.morning_summary"],
+        "WorkingDirectory": str(PROJECT_DIR),
+        # Runs daily at this local time. If the Mac was asleep then, launchd runs it on wake.
+        "StartCalendarInterval": {"Hour": hour, "Minute": minute},
+        "EnvironmentVariables": {"LOG_TO_CONSOLE": "false", "PYTHONUNBUFFERED": "1"},
+        "StandardOutPath": str(LOG_DIR / "morning.out.log"),
+        "StandardErrorPath": str(LOG_DIR / "morning.err.log"),
+    }
+
+
+def _load(label: str, plist_path: Path, plist: dict) -> None:
+    """Write a plist and (re)load it into launchd."""
+    # If an older version is loaded, unload it first. Fails harmlessly if it isn't loaded.
+    _launchctl("bootout", f"{_domain()}/{label}", check=False)
+    with open(plist_path, "wb") as f:
+        plistlib.dump(plist, f)
+    print(f"Wrote {plist_path}")
+    result = _launchctl("bootstrap", _domain(), str(plist_path), check=False)
+    if result.returncode != 0:
+        sys.exit(f"launchctl bootstrap failed for {label}:\n{result.stderr}")
+
+
+def _unload(label: str, plist_path: Path) -> None:
+    _launchctl("bootout", f"{_domain()}/{label}", check=False)
+    if plist_path.exists():
+        plist_path.unlink()
+
+
+def _morning_time() -> str:
+    # Imported here (not at the top) so the tests and `uninstall` don't need a complete .env.
+    from app.config import settings
+    return settings.morning_summary_time
+
+
 def _launchctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     # "gui/<your user id>" is launchd's name for your login session.
     return subprocess.run(["launchctl", *args], capture_output=True, text=True, check=check)
@@ -74,27 +123,31 @@ def install() -> None:
     if not (PROJECT_DIR / ".env").exists():
         sys.exit(f"Not found: {PROJECT_DIR / '.env'}\nCreate it first (README, Part 1).")
 
+    morning = _morning_time()
+    if morning:
+        try:
+            hour, minute = parse_time(morning)
+        except ValueError:
+            sys.exit(f"MORNING_SUMMARY_TIME must look like 07:30, got {morning!r}")
+
     LOG_DIR.mkdir(exist_ok=True)  # launchd won't create this folder itself
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    # If an older version is loaded, unload it first. Fails harmlessly if it isn't loaded.
-    _launchctl("bootout", f"{_domain()}/{LABEL}", check=False)
-
-    with open(PLIST_PATH, "wb") as f:
-        plistlib.dump(build_plist(), f)
-    print(f"Wrote {PLIST_PATH}")
-
-    result = _launchctl("bootstrap", _domain(), str(PLIST_PATH), check=False)
-    if result.returncode != 0:
-        sys.exit(f"launchctl bootstrap failed:\n{result.stderr}")
+    _load(LABEL, PLIST_PATH, build_plist())
     print("Service installed and started. Check it with:  python -m scripts.service status")
+
+    if morning:
+        _load(MORNING_LABEL, MORNING_PLIST_PATH, build_morning_plist(hour, minute))
+        print(f"Morning summary scheduled daily at {hour:02d}:{minute:02d}.")
+    else:
+        _unload(MORNING_LABEL, MORNING_PLIST_PATH)  # in case it was on before
+        print("Morning summary is off (MORNING_SUMMARY_TIME is empty).")
 
 
 def uninstall() -> None:
-    _launchctl("bootout", f"{_domain()}/{LABEL}", check=False)
-    if PLIST_PATH.exists():
-        PLIST_PATH.unlink()
-    print("Service stopped and removed.")
+    _unload(LABEL, PLIST_PATH)
+    _unload(MORNING_LABEL, MORNING_PLIST_PATH)
+    print("Service (and morning summary, if any) stopped and removed.")
 
 
 def restart() -> None:
@@ -116,6 +169,9 @@ def status() -> None:
         line = line.strip()
         if line.startswith(("state =", "pid =", "runs =", "last exit code =")):
             print(" ", line)
+
+    morning = _launchctl("print", f"{_domain()}/{MORNING_LABEL}", check=False)
+    print("  morning summary:", "scheduled" if morning.returncode == 0 else "off")
 
     import httpx  # imported here so the other commands work even outside the venv
     try:

@@ -54,6 +54,7 @@ class Settings:
     bluebubbles_password: str
     bluebubbles_send_method: str
     allowed_senders: frozenset[str]
+    owner_address: str  # first entry of ALLOWED_SENDERS: where scheduled texts are sent
     webhook_secret: str
     log_file: str
     log_to_console: bool
@@ -63,14 +64,12 @@ class Settings:
     google_calendar_enabled: bool
     google_client_secret_file: str
     google_token_file: str
+    morning_summary_time: str  # "HH:MM" 24-hour, or "" for off
 
 
 def load_settings() -> Settings:
-    allowed = {
-        normalize_address(a)
-        for a in _required("ALLOWED_SENDERS").split(",")
-        if a.strip()
-    }
+    # A list (not a set) here, to keep the order you wrote them in: the first one is "you".
+    allowed = [normalize_address(a) for a in _required("ALLOWED_SENDERS").split(",") if a.strip()]
     return Settings(
         anthropic_api_key=_required("ANTHROPIC_API_KEY"),
         claude_model=os.getenv("CLAUDE_MODEL", "claude-opus-5-5"),
@@ -79,6 +78,7 @@ def load_settings() -> Settings:
         bluebubbles_password=_required("BLUEBUBBLES_PASSWORD"),
         bluebubbles_send_method=os.getenv("BLUEBUBBLES_SEND_METHOD", "apple-script"),
         allowed_senders=frozenset(allowed),
+        owner_address=allowed[0],
         webhook_secret=_required("WEBHOOK_SECRET"),
         log_file=os.getenv("LOG_FILE", "logs/assistant.log"),
         log_to_console=_bool("LOG_TO_CONSOLE", True),
@@ -88,6 +88,7 @@ def load_settings() -> Settings:
         google_calendar_enabled=_bool("GOOGLE_CALENDAR_ENABLED", False),
         google_client_secret_file=os.getenv("GOOGLE_CLIENT_SECRET_FILE", "secrets/google_client_secret.json"),
         google_token_file=os.getenv("GOOGLE_TOKEN_FILE", "secrets/google_token.json"),
+        morning_summary_time=os.getenv("MORNING_SUMMARY_TIME", "").strip(),
     )
 
 

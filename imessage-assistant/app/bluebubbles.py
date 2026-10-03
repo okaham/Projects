@@ -61,6 +61,14 @@ def parse_new_message(payload: dict) -> IncomingMessage | None:
     )
 
 
+def chat_guid_for(address: str) -> str:
+    """The 1:1 chat guid for a normalized address (see config.normalize_address).
+
+    "15551234567" -> "iMessage;-;+15551234567",  "me@icloud.com" -> "iMessage;-;me@icloud.com"
+    """
+    return f"iMessage;-;{address if '@' in address else '+' + address}"
+
+
 def send_text(chat_guid: str, text: str) -> None:
     """Send an iMessage into an existing chat. Raises an exception if BlueBubbles reports an error."""
     response = httpx.post(

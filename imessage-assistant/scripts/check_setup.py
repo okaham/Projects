@@ -1,7 +1,7 @@
 """Check each piece separately before testing end to end.
 
     python -m scripts.check_setup            # check .env, BlueBubbles, Claude
-    python -m scripts.check_setup --send     # also text "test" to the first ALLOWED_SENDERS number
+    python -m scripts.check_setup --send     # also text a test message to the first ALLOWED_SENDERS entry
 """
 
 import sys
@@ -56,10 +56,8 @@ def main() -> int:
         print("[--]   Google Calendar is off (GOOGLE_CALENDAR_ENABLED=false)")
 
     if "--send" in sys.argv:
-        target = sorted(settings.allowed_senders)[0]
-        # 1:1 iMessage chat guids look like "iMessage;-;+15551234567" or "iMessage;-;me@icloud.com"
-        address = target if "@" in target else "+" + target
-        chat_guid = f"iMessage;-;{address}"
+        from app.bluebubbles import chat_guid_for
+        chat_guid = chat_guid_for(settings.owner_address)
         try:
             send_text(chat_guid, "Test message from your assistant (check_setup).")
             print("[OK]   Sent test text to", chat_guid)

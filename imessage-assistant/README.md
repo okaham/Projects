@@ -10,7 +10,7 @@ iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
    --> save your text + the reply (SQLite)
 ```
 
-**Status:** Phases 1–3 (core loop, memory, background service) and the first Phase 4 tool (read-only Google Calendar) are written and unit-tested, but **none of it has been tested on the Mac yet**. Memory and Calendar ship turned off, so you can test one piece at a time.
+**Status:** Phases 1–3 (core loop, memory, background service), the first Phase 4 tool (read-only Google Calendar) and the Phase 5 morning summary are written and unit-tested, but **none of it has been tested on the Mac yet**. Memory, Calendar and the morning summary ship turned off, so you can test one piece at a time.
 
 ## When you get home: test in this order
 
@@ -20,6 +20,7 @@ Each step only adds one new thing. If a step fails, the problem is in that step.
 2. **Part 3**: `MEMORY_ENABLED=true`, run the favorite-color test. *(Phase 2)*
 3. **Part 4**: stop uvicorn, `scripts.service install`, the kill-and-restart test, auto-login settings. *(Phase 3)*
 4. **Part 5**: Google sign-in, `GOOGLE_CALENDAR_ENABLED=true`, ask about your calendar. *(Phase 4a. Needs the Google Cloud setup done first; you can do that from any laptop.)*
+5. **Part 6**: run the morning summary by hand once, then schedule it. *(Phase 5)*
 
 ## Files
 
@@ -33,6 +34,7 @@ Each step only adds one new thing. If a step fails, the problem is in that step.
 | `app/tools.py` | Tool definitions Claude sees, and `run_tool()` that executes them |
 | `app/google_auth.py`, `app/google_calendar.py` | Google sign-in token handling; read-only Calendar queries |
 | `scripts/google_login.py` | One-time Google sign-in (opens a browser on the Mac) |
+| `scripts/morning_summary.py` | Texts you today's calendar; launchd runs it daily |
 | `docs/google-cloud-setup.md` | Click-by-click Google Cloud console setup |
 | `app/logging_setup.py` | Logs to the terminal and `logs/assistant.log` (rotating, max 5 MB) |
 | `scripts/check_setup.py` | Tests BlueBubbles and Claude separately, before you try end to end |
@@ -192,6 +194,21 @@ Limits right now: primary calendar only (not shared or subscribed calendars). It
 
 ---
 
+## Part 6: Morning summary (Phase 5)
+
+Needs Part 5 (Calendar) working first.
+
+1. Make sure your phone number is the **first** entry in `ALLOWED_SENDERS`. Scheduled texts go there.
+2. Test it by hand: `python -m scripts.morning_summary`. You should get a text with today's events. Its log is `logs/morning.log`, separate from the server's log.
+3. Set `MORNING_SUMMARY_TIME=07:30` (24-hour time, any time you like) in `.env`.
+4. `python -m scripts.service install`. This sets up a second launchd job next to the server. `status` should say `morning summary: scheduled`.
+
+To turn it off, empty `MORNING_SUMMARY_TIME` and run `install` again. If the Mac is asleep at the scheduled time, launchd runs the job when it wakes. If the Mac is off, that day's summary is skipped.
+
+If memory is on, the summary is saved to the conversation, so you can reply "where's the 2pm?" and the bot knows what you mean. If Google access has expired, the summary text says so, which also works as your reminder to run `google_login`.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -225,4 +242,4 @@ Limits right now: primary calendar only (not shared or subscribed calendars). It
 2. Memory (last 20 messages per chat in SQLite): written and unit-tested, not yet tested on the Mac
 3. launchd service with auto-restart: written and unit-tested, not yet tested on the Mac
 4. Tools: Google Calendar (read): written and unit-tested, not yet tested on the Mac → Gmail (read → draft → send, with confirmation by text) → Google Drive. Every side-effecting action asks for confirmation first.
-5. Scheduled tasks (e.g. a morning calendar summary)
+5. Scheduled tasks: morning calendar summary written and unit-tested, not yet tested on the Mac

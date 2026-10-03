@@ -40,7 +40,7 @@ def init_db() -> None:
         conn.close()
 
 
-def save_exchange(chat_guid: str, user_text: str, assistant_text: str, message_guid: str) -> None:
+def save_exchange(chat_guid: str, user_text: str, assistant_text: str, message_guid: str | None) -> None:
     """Save your text and the bot's reply together.
 
     Both rows are written in one transaction: either both are saved or neither is.
