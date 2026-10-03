@@ -16,7 +16,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from app.config import normalize_address, settings
 from app.logging_setup import setup_logging
 
-setup_logging(settings.log_file)
+setup_logging(settings.log_file, to_console=settings.log_to_console)
 
 from app import memory  # noqa: E402
 from app.bluebubbles import IncomingMessage, parse_new_message, send_text  # noqa: E402

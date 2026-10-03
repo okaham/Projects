@@ -37,6 +37,14 @@ def _required(name: str) -> str:
     return value
 
 
+def _bool(name: str, default: bool) -> bool:
+    """Read a true/false setting. Accepts true/false, yes/no, 1/0."""
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in ("1", "true", "yes")
+
+
 @dataclass(frozen=True)
 class Settings:
     anthropic_api_key: str
@@ -48,6 +56,7 @@ class Settings:
     allowed_senders: frozenset[str]
     webhook_secret: str
     log_file: str
+    log_to_console: bool
     memory_enabled: bool
     history_limit: int
     db_path: str
@@ -69,7 +78,8 @@ def load_settings() -> Settings:
         allowed_senders=frozenset(allowed),
         webhook_secret=_required("WEBHOOK_SECRET"),
         log_file=os.getenv("LOG_FILE", "logs/assistant.log"),
-        memory_enabled=os.getenv("MEMORY_ENABLED", "false").strip().lower() in ("1", "true", "yes"),
+        log_to_console=_bool("LOG_TO_CONSOLE", True),
+        memory_enabled=_bool("MEMORY_ENABLED", False),
         history_limit=int(os.getenv("HISTORY_LIMIT", "20")),
         db_path=os.getenv("DB_PATH", "data/assistant.db"),
     )

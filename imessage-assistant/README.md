@@ -10,7 +10,7 @@ iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
    --> save your text + the reply (SQLite)
 ```
 
-**Status:** Phase 1 (core loop) and Phase 2 (memory) are written and unit-tested, but **not yet tested on the Mac**. Memory ships turned off (`MEMORY_ENABLED=false`) so you can check Phase 1 alone first. No tools yet.
+**Status:** Phases 1–3 (core loop, memory, background service) are written and unit-tested, but **not yet tested on the Mac**. Memory ships turned off (`MEMORY_ENABLED=false`) so you can check Phase 1 alone first. No tools yet.
 
 ## Files
 
@@ -23,6 +23,7 @@ iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
 | `app/memory.py` | SQLite conversation history (`data/assistant.db`) |
 | `app/logging_setup.py` | Logs to the terminal and `logs/assistant.log` (rotating, max 5 MB) |
 | `scripts/check_setup.py` | Tests BlueBubbles and Claude separately, before you try end to end |
+| `scripts/service.py` | Installs, restarts, checks or removes the launchd background service |
 | `tests/` | Tests for the webhook filters (Claude and BlueBubbles are faked) |
 
 ---
@@ -60,7 +61,7 @@ Fill in:
 
 **4. Run the tests** (no network needed):
 ```bash
-pytest -q          # expect: 24 passed
+pytest -q          # expect: "N passed", no failures
 ```
 
 ---
@@ -126,6 +127,45 @@ How memory behaves:
 
 ---
 
+## Part 4: Run it as a background service (Phase 3)
+
+Do this after Parts 2 and 3 work with uvicorn running in a terminal. After this, you no longer start the server by hand: macOS starts it at login and restarts it within about 10 seconds if it crashes.
+
+**1. Stop the uvicorn you started by hand** (Ctrl+C in that terminal). Two servers can't use port 8000 at the same time.
+
+**2. Install the service:**
+```bash
+cd ~/Projects/imessage-assistant && source .venv/bin/activate
+python -m scripts.service install
+python -m scripts.service status
+```
+`status` should show `state = running` and `/health -> 200`. Text the bot to confirm it still replies.
+
+**3. Test the auto-restart.** Kill the process and watch launchd bring it back:
+```bash
+pkill -f "uvicorn app.main:app"
+sleep 15 && python -m scripts.service status    # should be running again, with a new pid
+```
+
+**4. Make the Mac recover on its own after a power cut or reboot.** The service runs inside your login session, and so do BlueBubbles and Messages. So all three only come back if the Mac logs you in automatically.
+- **BlueBubbles Server** → Settings → turn on its start-at-login option (named something like "Startup with macOS").
+- **System Settings → Users & Groups → Automatically log in as** → your user. macOS hides this option while **FileVault** disk encryption is on. Turning FileVault off lets anyone who steals the Mac read the disk. That's your trade-off to make. If you keep FileVault on, someone has to type your password after every reboot before anything works.
+- **System Settings → Energy → "Start up automatically after a power failure"** → on (desktop Macs; laptops don't have it).
+
+**Day-to-day commands:**
+
+| Task | Command |
+|---|---|
+| After changing code or `.env` | `python -m scripts.service restart` |
+| Is it running? | `python -m scripts.service status` |
+| Watch the log | `tail -f logs/assistant.log` |
+| It keeps crashing on startup | `cat logs/launchd.err.log` (startup errors such as a missing `.env` setting land here, because they happen before logging starts) |
+| Remove the service | `python -m scripts.service uninstall` |
+
+Texts that arrive while the server is down (during a restart, for example) are not answered later. BlueBubbles sends each webhook once and doesn't retry.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -155,6 +195,6 @@ How memory behaves:
 
 1. Core loop: written and unit-tested, not yet tested on the Mac
 2. Memory (last 20 messages per chat in SQLite): written and unit-tested, not yet tested on the Mac
-3. launchd service with auto-restart
+3. launchd service with auto-restart: written and unit-tested, not yet tested on the Mac
 4. Tools: Google Calendar (read) → Gmail (read → draft → send, with confirmation by text) → Google Drive. Every side-effecting action asks for confirmation first.
 5. Scheduled tasks (e.g. a morning calendar summary)
