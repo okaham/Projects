@@ -10,7 +10,16 @@ iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
    --> save your text + the reply (SQLite)
 ```
 
-**Status:** Phases 1–3 (core loop, memory, background service) are written and unit-tested, but **not yet tested on the Mac**. Memory ships turned off (`MEMORY_ENABLED=false`) so you can check Phase 1 alone first. No tools yet.
+**Status:** Phases 1–3 (core loop, memory, background service) and the first Phase 4 tool (read-only Google Calendar) are written and unit-tested, but **none of it has been tested on the Mac yet**. Memory and Calendar ship turned off, so you can test one piece at a time.
+
+## When you get home: test in this order
+
+Each step only adds one new thing. If a step fails, the problem is in that step.
+
+1. **Part 1 + Part 2**: install, `check_setup --send`, run uvicorn by hand, add the webhook, text the bot. *(Phase 1)*
+2. **Part 3**: `MEMORY_ENABLED=true`, run the favorite-color test. *(Phase 2)*
+3. **Part 4**: stop uvicorn, `scripts.service install`, the kill-and-restart test, auto-login settings. *(Phase 3)*
+4. **Part 5**: Google sign-in, `GOOGLE_CALENDAR_ENABLED=true`, ask about your calendar. *(Phase 4a. Needs the Google Cloud setup done first; you can do that from any laptop.)*
 
 ## Files
 
@@ -21,6 +30,10 @@ iPhone --iMessage--> Mac (BlueBubbles) --POST /webhook--> this server
 | `app/bluebubbles.py` | Parses BlueBubbles webhooks and sends texts through its REST API |
 | `app/claude_client.py` | The Claude API call |
 | `app/memory.py` | SQLite conversation history (`data/assistant.db`) |
+| `app/tools.py` | Tool definitions Claude sees, and `run_tool()` that executes them |
+| `app/google_auth.py`, `app/google_calendar.py` | Google sign-in token handling; read-only Calendar queries |
+| `scripts/google_login.py` | One-time Google sign-in (opens a browser on the Mac) |
+| `docs/google-cloud-setup.md` | Click-by-click Google Cloud console setup |
 | `app/logging_setup.py` | Logs to the terminal and `logs/assistant.log` (rotating, max 5 MB) |
 | `scripts/check_setup.py` | Tests BlueBubbles and Claude separately, before you try end to end |
 | `scripts/service.py` | Installs, restarts, checks or removes the launchd background service |
@@ -166,6 +179,19 @@ Texts that arrive while the server is down (during a restart, for example) are n
 
 ---
 
+## Part 5: Google Calendar (Phase 4a, read-only)
+
+1. Do the Google Cloud console steps in [`docs/google-cloud-setup.md`](docs/google-cloud-setup.md). Any laptop works. You end up with a `google_client_secret.json` file.
+2. On the Mac, follow step 5 of that doc: `pip install -r requirements.txt`, move the JSON into `secrets/`, then `python -m scripts.google_login`.
+3. Set `GOOGLE_CALENDAR_ENABLED=true` in `.env`, then `python -m scripts.service restart`.
+4. Text "What's on my calendar today?" and "Am I free Thursday afternoon?" In the log you should see `Tool call: list_calendar_events {...}` followed by a reply listing your events.
+
+How tools work: Claude's reply either answers you, or says "I want to call `list_calendar_events` with these inputs." In the second case, `get_reply()` runs the tool, adds the result to the conversation, and asks Claude again. It allows at most 5 rounds of this per text. If something goes wrong in a tool (bad date, expired Google login), the error goes back to Claude as text, and Claude tells you about it by text instead of the bot crashing.
+
+Limits right now: primary calendar only (not shared or subscribed calendars). It can only read; nothing can create or change events. The current date and time come from the Mac's clock and time zone.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -178,6 +204,8 @@ Texts that arrive while the server is down (during a restart, for example) are n
 | `Claude call failed` / 401 | Bad `ANTHROPIC_API_KEY`, or the account has no credits. |
 | Changed `.env` and nothing happened | Settings load at startup. Restart uvicorn (Ctrl+C, then run it again). |
 | Bot forgets things with memory on | Check the log line `Claude replied: history=N msgs`. If N is always 0, `MEMORY_ENABLED` isn't `true`, or the server wasn't restarted. |
+| Bot says Google access expired | Run `python -m scripts.google_login` on the Mac. If this happens every 7 days, your Google app is in Testing mode (see the decision in `docs/google-cloud-setup.md`). |
+| Calendar answers have the wrong day or time | The bot uses the Mac's time zone. Check System Settings → General → Date & Time. |
 | `Reply sent, but saving message ... failed` | The reply reached you but wasn't stored. Usually disk space or permissions on `data/`. |
 
 ---
@@ -196,5 +224,5 @@ Texts that arrive while the server is down (during a restart, for example) are n
 1. Core loop: written and unit-tested, not yet tested on the Mac
 2. Memory (last 20 messages per chat in SQLite): written and unit-tested, not yet tested on the Mac
 3. launchd service with auto-restart: written and unit-tested, not yet tested on the Mac
-4. Tools: Google Calendar (read) → Gmail (read → draft → send, with confirmation by text) → Google Drive. Every side-effecting action asks for confirmation first.
+4. Tools: Google Calendar (read): written and unit-tested, not yet tested on the Mac → Gmail (read → draft → send, with confirmation by text) → Google Drive. Every side-effecting action asks for confirmation first.
 5. Scheduled tasks (e.g. a morning calendar summary)

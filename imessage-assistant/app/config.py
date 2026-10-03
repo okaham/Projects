@@ -60,6 +60,9 @@ class Settings:
     memory_enabled: bool
     history_limit: int
     db_path: str
+    google_calendar_enabled: bool
+    google_client_secret_file: str
+    google_token_file: str
 
 
 def load_settings() -> Settings:
@@ -82,6 +85,9 @@ def load_settings() -> Settings:
         memory_enabled=_bool("MEMORY_ENABLED", False),
         history_limit=int(os.getenv("HISTORY_LIMIT", "20")),
         db_path=os.getenv("DB_PATH", "data/assistant.db"),
+        google_calendar_enabled=_bool("GOOGLE_CALENDAR_ENABLED", False),
+        google_client_secret_file=os.getenv("GOOGLE_CLIENT_SECRET_FILE", "secrets/google_client_secret.json"),
+        google_token_file=os.getenv("GOOGLE_TOKEN_FILE", "secrets/google_token.json"),
     )
 
 

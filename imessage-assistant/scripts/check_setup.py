@@ -42,6 +42,19 @@ def main() -> int:
     else:
         print("[--]   Memory is off (MEMORY_ENABLED=false)")
 
+    if settings.google_calendar_enabled:
+        from datetime import date
+
+        from app import google_calendar
+        try:
+            events = google_calendar.list_events(date.today().isoformat(), 1)
+            print(f"[OK]   Google Calendar: {len(events)} event(s) today")
+        except Exception as e:
+            print(f"[FAIL] Google Calendar: {e}")
+            ok = False
+    else:
+        print("[--]   Google Calendar is off (GOOGLE_CALENDAR_ENABLED=false)")
+
     if "--send" in sys.argv:
         target = sorted(settings.allowed_senders)[0]
         # 1:1 iMessage chat guids look like "iMessage;-;+15551234567" or "iMessage;-;me@icloud.com"

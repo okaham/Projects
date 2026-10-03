@@ -1,5 +1,6 @@
 # Secrets - never commit
 .env
+secrets/
 
 # Runtime data
 logs/
