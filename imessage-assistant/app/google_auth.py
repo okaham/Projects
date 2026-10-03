@@ -5,6 +5,7 @@ and Google gives back a token that's saved to secrets/google_token.json. After t
 get_credentials() loads that token and quietly renews it whenever it expires (about hourly).
 """
 
+import json
 import logging
 import os
 
@@ -39,7 +40,14 @@ def get_credentials() -> Credentials:
     if not os.path.exists(settings.google_token_file):
         raise GoogleLoginNeeded(LOGIN_HINT)
 
-    creds = Credentials.from_authorized_user_file(settings.google_token_file, SCOPES)
+    with open(settings.google_token_file) as f:
+        info = json.load(f)
+    # If SCOPES has grown since you logged in (e.g. Gmail added), the saved token can't do the
+    # new things. Catch that here with a clear message, instead of a confusing 403 later.
+    if not set(SCOPES) <= set(info.get("scopes") or []):
+        raise GoogleLoginNeeded("New Google permissions were added. " + LOGIN_HINT)
+
+    creds = Credentials.from_authorized_user_info(info, SCOPES)
     if creds.valid:
         return creds
 

@@ -102,7 +102,8 @@ def test_expired_refresh_token_asks_for_login(monkeypatch, tmp_path):
 
     token = tmp_path / "token.json"
     token.write_text(json.dumps({"token": "old", "refresh_token": "r", "client_id": "c",
-                                 "client_secret": "s", "expiry": "2020-01-01T00:00:00Z"}))
+                                 "client_secret": "s", "expiry": "2020-01-01T00:00:00Z",
+                                 "scopes": google_auth.SCOPES}))
     monkeypatch.setattr(google_auth, "settings",
                         dataclasses.replace(google_auth.settings, google_token_file=str(token)))
 
@@ -111,4 +112,14 @@ def test_expired_refresh_token_asks_for_login(monkeypatch, tmp_path):
 
     monkeypatch.setattr(google_auth.Credentials, "refresh", refresh_fails)
     with pytest.raises(google_auth.GoogleLoginNeeded):
+        google_auth.get_credentials()
+
+
+def test_token_missing_new_scopes_asks_for_login(monkeypatch, tmp_path):
+    token = tmp_path / "token.json"
+    token.write_text(json.dumps({"token": "t", "refresh_token": "r", "client_id": "c", "client_secret": "s",
+                                 "scopes": ["https://www.googleapis.com/auth/userinfo.email"]}))
+    monkeypatch.setattr(google_auth, "settings",
+                        dataclasses.replace(google_auth.settings, google_token_file=str(token)))
+    with pytest.raises(google_auth.GoogleLoginNeeded, match="New Google permissions"):
         google_auth.get_credentials()
